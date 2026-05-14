@@ -8,6 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="Kalorien">
   <meta name="theme-color" content="#111111">
   <link rel="manifest" href="manifest.json">
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <title>Kalorien Tracker</title>
   <style>
     :root {
@@ -447,16 +448,20 @@
   <div class="modal">
     <div class="handle"></div>
     <div class="modal-title">📷 Produkt scannen</div>
-    <div class="scan-frame">
-      <video id="bc-video" autoplay muted playsinline></video>
-      <div class="scan-overlay"><div class="scan-box"></div></div>
-    </div>
-    <div id="bc-status" style="text-align:center;color:var(--muted);font-size:13px;margin-bottom:14px;min-height:40px;display:flex;align-items:center;justify-content:center;gap:8px;">
-      Kamera auf Produkt richten…
+    <div id="bc-reader" style="width:100%;border-radius:16px;overflow:hidden;margin-bottom:12px;"></div>
+    <div id="bc-status" style="text-align:center;color:var(--muted);font-size:13px;margin-bottom:14px;min-height:36px;display:flex;align-items:center;justify-content:center;gap:8px;">
+      Kamera wird gestartet…
     </div>
     <button class="btn-secondary" onclick="closeBarcode()">Abbrechen</button>
   </div>
 </div>
+
+<!-- hide html5-qrcode default UI chrome -->
+<style>
+  #bc-reader { background: #000; }
+  #bc-reader__scan_region { border-radius: 14px; overflow: hidden; }
+  #bc-reader__dashboard { display: none !important; }
+</style>
 
 <script>
 // ── CONSTANTS ────────────────────────────────────────────────
@@ -890,35 +895,32 @@ function dl(name, content, mime) {
 }
 
 // ── BARCODE SCANNER ──────────────────────────────────────────
+let html5QrCode = null;
+
 function openBarcode() { openOv('ov-barcode'); startBarcode(); }
 
 async function startBarcode() {
   const statusEl = document.getElementById('bc-status');
+  statusEl.innerHTML = '<span class="spinner"></span> Kamera wird gestartet…';
   try {
-    bcStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode:'environment', width:{ideal:1280}, height:{ideal:720} }
-    });
-    const video = document.getElementById('bc-video');
-    video.srcObject = bcStream; await video.play();
-
-    if ('BarcodeDetector' in window) {
-      const det = new BarcodeDetector({ formats:['ean_13','ean_8','upc_a','upc_e','code_128'] });
-      bcTimer = setInterval(async () => {
-        try {
-          const codes = await det.detect(video);
-          if (codes.length) { clearInterval(bcTimer); bcTimer=null; await lookupBarcode(codes[0].rawValue, statusEl); }
-        } catch(e) {}
-      }, 400);
-    } else {
-      statusEl.innerHTML = `
-        <div style="text-align:center;">
-          <p style="margin-bottom:10px;color:var(--muted);">Barcode manuell eingeben:</p>
-          <input type="text" class="finput" id="bc-manual" placeholder="EAN / Barcode…" style="margin-bottom:8px;">
-          <button class="btn-primary" style="margin-top:0;" onclick="lookupBarcode(document.getElementById('bc-manual').value, document.getElementById('bc-status'))">Suchen</button>
-        </div>`;
-    }
+    html5QrCode = new Html5Qrcode('bc-reader');
+    await html5QrCode.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 260, height: 120 }, aspectRatio: 1.5 },
+      async (code) => {
+        await closeBarcode();
+        await lookupBarcode(code, statusEl);
+      },
+      () => {}
+    );
+    statusEl.textContent = 'Kamera auf Barcode richten…';
   } catch(err) {
-    statusEl.textContent = 'Kamera-Zugriff verweigert. Bitte in Einstellungen erlauben.';
+    statusEl.innerHTML = `
+      <div style="text-align:center;width:100%;">
+        <p style="margin-bottom:10px;">Kein Kamerazugriff.<br>Barcode manuell eingeben:</p>
+        <input type="text" class="finput" id="bc-manual" placeholder="EAN-Nummer…" style="margin-bottom:8px;">
+        <button class="btn-primary" style="margin-top:0;" onclick="lookupBarcode(document.getElementById('bc-manual').value, document.getElementById('bc-status'))">Suchen</button>
+      </div>`;
   }
 }
 
@@ -969,11 +971,13 @@ async function lookupBarcode(code, statusEl) {
   }
 }
 
-function closeBarcode() {
-  clearInterval(bcTimer); bcTimer=null;
-  if (bcStream) { bcStream.getTracks().forEach(t=>t.stop()); bcStream=null; }
-  document.getElementById('bc-video').srcObject = null;
-  document.getElementById('bc-status').innerHTML = 'Kamera auf Produkt richten…';
+async function closeBarcode() {
+  if (html5QrCode) {
+    try { await html5QrCode.stop(); html5QrCode.clear(); } catch(e) {}
+    html5QrCode = null;
+  }
+  document.getElementById('bc-reader').innerHTML = '';
+  document.getElementById('bc-status').textContent = 'Kamera wird gestartet…';
   closeOv('ov-barcode');
 }
 
